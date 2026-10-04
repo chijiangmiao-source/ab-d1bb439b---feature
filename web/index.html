@@ -51,7 +51,15 @@
   th { color: var(--dim); font-weight: 600; background: #12181f; }
   td.mono, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; word-break: break-all; }
   .codeword { font-family: ui-monospace, Menlo, Consolas, monospace; word-break: break-all; }
+  .codeword { font-family: ui-monospace, Menlo, Consolas, monospace; word-break: break-all; }
   .codeword mark { background: transparent; color: var(--err); font-weight: 700; }
+  .codeword mark.erasure { color: var(--warn); }
+  .tag { display: inline-block; border-radius: 4px; padding: 0 7px; font-size: 12px; font-weight: 600; }
+  .tag.erasure { background: rgba(210,153,34,.15); color: var(--warn); }
+  .tag.unknown { background: rgba(248,81,73,.15); color: var(--err); }
+  .capbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
+  .capbar .box { border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; }
+  .capbar b { color: var(--fg); }
   .badge { display: inline-block; border-radius: 4px; padding: 1px 8px; font-size: 12px; font-weight: 600; }
   .badge.ok { background: rgba(63,185,80,.15); color: var(--ok); }
   .badge.err { background: rgba(248,81,73,.15); color: var(--err); }
@@ -96,6 +104,12 @@
           value="000000000000010">
         <div class="hint">仅含 0/1，长度须恰为 2<sup>m</sup>−1；最左位对应 x<sup>n−1</sup>，综合症 / BM / Chien 共用同一位序</div>
       </div>
+
+      <label for="erasures">擦除位置（可选）</label>
+      <div>
+        <input id="erasures" type="text" spellcheck="false" autocomplete="off" placeholder="如：2, 9">
+        <div class="hint">链路质量标记指出的<strong>零基</strong>比特位置（自左向右，0…n−1），逗号或空白分隔；留空则与无擦除复核完全一致。擦除只纳入联合定位，不放宽码字规则</div>
+      </div>
     </div>
     <div class="buttons">
       <button id="btn-run">复核</button>
@@ -130,24 +144,29 @@
   </section>
 
   <section id="result3" class="panel result">
-    <h2>③ Berlekamp–Massey 错误定位多项式</h2>
+    <h2>③ 未知错误定位多项式 σ(x)（Berlekamp–Massey，由擦除修正综合症 T 导出）</h2>
     <div class="mono" id="locator-text"></div>
     <div class="scroll-x" style="margin-top:8px"><table>
-      <thead><tr><th>i</th><th>Λ_i（GF(2^m) 元素）</th></tr></thead>
+      <thead><tr><th>i</th><th>σ_i（GF(2^m) 元素）</th></tr></thead>
       <tbody id="t-loc"></tbody>
     </table></div>
   </section>
 
+  <section id="result-era" class="panel result">
+    <h2>④ 擦除定位多项式 Γ(x) 与联合定位多项式 Λ(x) = Γ(x)·σ(x)</h2>
+    <div id="era-body"></div>
+  </section>
+
   <section id="result4" class="panel result">
-    <h2>④ Chien 搜索：Λ(α<sup>−i</sup>) = 0 对应的比特位置</h2>
+    <h2>⑤ Chien 搜索：Λ(α<sup>−i</sup>) = 0 对应的实际翻转位置</h2>
     <div class="scroll-x"><table>
-      <thead><tr><th>错误位 x^i（幂次）</th><th>定位根</th><th>串内位置（自左数，1 基）</th></tr></thead>
+      <thead><tr><th>翻转位 x^i（幂次）</th><th>定位根</th><th>类别</th><th>串内位置（自左数，1 基）</th></tr></thead>
       <tbody id="t-roots"></tbody>
     </table></div>
   </section>
 
   <section id="result5" class="panel result">
-    <h2>⑤ 纠正结果 <span id="conclusion-badge" class="badge ok"></span></h2>
+    <h2>⑥ 纠正结果 <span id="conclusion-badge" class="badge ok"></span></h2>
     <table>
       <tbody>
         <tr><th>接收码字</th><td id="cw-in" class="mono codeword"></td></tr>
@@ -158,7 +177,7 @@
     <p class="hint" id="conclusion-text"></p>
   </section>
 </main>
-<footer>本地静态页面 · Worker 先验证本原性再构造生成多项式 · 仅当根数 = deg(Λ) 且纠正后综合症全零才给出可纠正结论</footer>
+<footer>本地静态页面 · Worker 先验证本原性再构造生成多项式 · 仅当全部根证据闭合、翻转后综合症全零且 2ν+e ≤ 2t 时，才与擦除共同给出可纠正结论</footer>
 
 <script type="module" src="./app.js"></script>
 </body>

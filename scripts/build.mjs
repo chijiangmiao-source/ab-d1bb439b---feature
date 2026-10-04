@@ -52,6 +52,19 @@ async function main() {
   if (result.errorCount !== 2 || !result.roots || result.roots.length !== result.locator.degree) {
     throw new Error('构建失败：内置可纠正样例未按预期闭合。');
   }
+
+  // 擦除样例：同一接收串，把零基位置 2 标记为擦除，9 作为未知错误。
+  const erasureInput = { ...sampleInput, erasures: [2] };
+  const erasureResult = analyzeBch(erasureInput);
+  if (
+    erasureResult.erasureLocator.count !== 1 ||
+    erasureResult.unknownErrorCount !== 1 ||
+    erasureResult.jointLocator.capacityUsed !== 3 ||
+    erasureResult.corrected !== result.corrected
+  ) {
+    throw new Error('构建失败：内置擦除样例未按预期闭合（1 擦除 + 1 未知）。');
+  }
+
   await writeFile(
     resolve(DIST, 'sample.json'),
     JSON.stringify(
@@ -63,6 +76,16 @@ async function main() {
           generatorBits: result.generator.bits,
           corrected: result.corrected,
           errorStringIndexes1: result.roots.map((x) => x.stringIndex1),
+        },
+        erasureDescription:
+          '同一接收串：零基位置 2 标记为擦除（e=1），位置 9 为未知错误（ν=1），2ν+e=3 ≤ 2t=4',
+        erasureInput,
+        erasureExpect: {
+          erasureCount: 1,
+          unknownErrorCount: 1,
+          capacityUsed: 3,
+          erasureStringIndexes0: [2],
+          corrected: erasureResult.corrected,
         },
       },
       null,

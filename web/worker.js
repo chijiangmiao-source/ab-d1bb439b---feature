@@ -10,6 +10,12 @@ self.onmessage = (e) => {
       polyStr: String(msg.polyStr ?? ''),
       t: Number(msg.t),
       rStr: String(msg.rStr ?? ''),
+      erasures:
+        msg.erasures == null
+          ? []
+          : Array.isArray(msg.erasures)
+            ? msg.erasures
+            : String(msg.erasures),
     });
     self.postMessage({ type: 'result', result });
   } catch (err) {

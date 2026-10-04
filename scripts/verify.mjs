@@ -107,7 +107,34 @@ async function main() {
       `[smoke] /sample.json 200 OK -> 纠正 ${result.errorCount} 位，g=${result.generator.text}`
     );
     console.log(`[smoke] 纠正码字：${result.corrected}`);
-    console.log('\n全部复核通过：测试、构建、健康页与可纠正样例冒烟均闭合。');
+
+    // 擦除样例冒烟：同一接收串，1 个标记擦除 + 1 个未知错误，须与无擦除纠正到同一码字
+    const er = analyzeBch(sample.erasureInput);
+    const ee = sample.erasureExpect;
+    if (er.erasureLocator.count !== ee.erasureCount) {
+      throw new Error(`擦除样例擦除数不符：期望 ${ee.erasureCount}，实得 ${er.erasureLocator.count}`);
+    }
+    if (er.unknownErrorCount !== ee.unknownErrorCount) {
+      throw new Error(`擦除样例未知错误数不符：期望 ${ee.unknownErrorCount}，实得 ${er.unknownErrorCount}`);
+    }
+    if (er.jointLocator.capacityUsed !== ee.capacityUsed) {
+      throw new Error(`擦除样例能力用量不符：期望 ${ee.capacityUsed}，实得 ${er.jointLocator.capacityUsed}`);
+    }
+    if (er.corrected !== ee.corrected) {
+      throw new Error('擦除样例纠正码字与构建期记录不一致。');
+    }
+    if (er.roots.some((x) => x.kind === 'erasure' && !ee.erasureStringIndexes0.includes(x.stringIndex0))) {
+      throw new Error('擦除样例擦除根证据不闭合：出现未标记的擦除根。');
+    }
+    if (!er.roots.every((x) => ee.erasureStringIndexes0.includes(x.stringIndex0) || x.kind === 'unknown')) {
+      throw new Error('擦除样例联合根类别不闭合。');
+    }
+    console.log(
+      `[smoke] 擦除样例闭合：${ee.erasureCount} 擦除 + ${ee.unknownErrorCount} 未知，能力用量 ${ee.capacityUsed}/2t，` +
+        `Γ/σ/Λ 证据与翻转后综合症均闭合`
+    );
+
+    console.log('\n全部复核通过：测试、构建、健康页、可纠正样例与擦除联合纠正冒烟均闭合。');
   } catch (e) {
     failed = e;
   } finally {

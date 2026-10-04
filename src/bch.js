@@ -227,6 +227,18 @@ export function berlekampMassey(field, syndromes) {
   return { lambda: C, L };
 }
 
+/** GF(2^m)[x] 多项式乘法（系数数组，下标为 x 的幂次，减法即异或）。 */
+function fieldPolyMul(field, a, b) {
+  const out = new Array(a.length + b.length - 1).fill(0);
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] === 0) continue;
+    for (let j = 0; j < b.length; j++) {
+      if (b[j] !== 0) out[i + j] ^= field.mul(a[i], b[j]);
+    }
+  }
+  return out;
+}
+
 /** 定位多项式文本：Λ(x) = 1 + α^u x + …。 */
 export function formatLocator(field, lambda) {
   const terms = [];
@@ -259,6 +271,35 @@ export function chienSearch(field, lambda, L) {
 }
 
 /**
+ * 解析零基擦除位置输入。
+ * 接受数字数组或空白/逗号分隔的字符串（如 "2, 9 13"）；
+ * 空输入（未填写擦除）归一化为空数组。任何非法记号抛出中文 Error。
+ */
+function parseErasures(raw) {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) {
+    return raw.map((v) => {
+      if (!Number.isInteger(v)) {
+        throw new Error(`擦除位置非法：${String(v)} 不是整数。`);
+      }
+      return v;
+    });
+  }
+  if (typeof raw !== 'string') {
+    throw new Error('擦除位置非法：需为零基整数位置的逗号/空白分隔列表。');
+  }
+  const tokens = raw.trim().split(/[\s,，、;；]+/).filter((s) => s.length > 0);
+  const positions = [];
+  for (const tok of tokens) {
+    if (!/^[+-]?\d+$/.test(tok)) {
+      throw new Error(`擦除位置非法：“${tok}”不是整数（零基位置，用逗号或空白分隔）。`);
+    }
+    positions.push(Number(tok));
+  }
+  return positions;
+}
+
+/**
  * 完整复核入口。成功返回结构化证据；任何无法闭合的情况抛出中文 Error。
  *
  * 输入：
@@ -266,8 +307,10 @@ export function chienSearch(field, lambda, L) {
  *   polyStr  m 次本原多项式比特串（首位 x^m，末位常数项）
  *   t        纠错能力
  *   rStr     长度恰为 2^m−1 的接收码字（最左为 x^(n−1)）
+ *   erasures 可选；零基擦除位置（串内自左向右下标），数字数组或分隔字符串。
+ *            未填写（空数组/空串）时流程与无擦除完全一致。
  */
-export function analyzeBch({ m, polyStr, t, rStr }) {
+export function analyzeBch({ m, polyStr, t, rStr, erasures }) {
   // 1) 先验证多项式确为 m 次本原多项式。
   const f = validatePrimitivePolynomial(m, polyStr);
   const field = makeField(m, f);
@@ -284,8 +327,32 @@ export function analyzeBch({ m, polyStr, t, rStr }) {
     throw new Error(`接收码字长度非法：应为 n=2^m−1=${n} 位，实际 ${rStr.length} 位。`);
   }
 
-  // 4) 综合症。
+  // 3.5) 擦除位置：解析为串内 0 基下标，再换算为码多项式幂次 i = n−1−p。
+  const erasureStringIndexes = parseErasures(erasures);
+  const seenErasure = new Set();
+  const erasurePowers = [];
+  for (const p of erasureStringIndexes) {
+    if (p < 0 || p >= n) {
+      throw new Error(
+        `擦除位置越界：零基位置 ${p} 超出 [0, ${n - 1}]（码长 n=${n}）。`
+      );
+    }
+    if (seenErasure.has(p)) {
+      throw new Error(`擦除位置重复：零基位置 ${p} 出现了不止一次，联合定位要求各位置互异。`);
+    }
+    seenErasure.add(p);
+    erasurePowers.push(n - 1 - p);
+  }
+  const eCount = erasurePowers.length;
+  const hasErasures = eCount > 0;
   const twoT = 2 * t;
+  if (eCount > twoT) {
+    throw new Error(
+      `擦除数超过能力：标记了 ${eCount} 个擦除，但该码联合能力界限为 2ν+e ≤ 2t=${twoT}（ν≥0），仅擦除本身就已超出，标记不能放宽原有码字规则。`
+    );
+  }
+
+  // 4) 综合症。
   const syndromes = computeSyndromes(field, rStr, twoT);
   const syndromeView = syndromes.map((v, idx) => ({
     j: idx + 1,
@@ -295,23 +362,91 @@ export function analyzeBch({ m, polyStr, t, rStr }) {
 
   const allZero = syndromes.every((v) => v === 0);
 
-  // 5) Berlekamp–Massey。
-  const { lambda, L } = berlekampMassey(field, syndromes);
-  if (L > t) {
+  // 5) 擦除定位多项式 Γ(x) = ∏_{i∈擦除} (1 + X_i x)，X_i = α^i 为定位元
+  //    （与综合症约定 S_j = α^(j·i) 一致；因子根为 α^(−i)，供 Chien 搜索）。
+  //    无擦除时 Γ = 1，修正综合症退化为原综合症，联合流程与原实现一致。
+  let gamma = [1];
+  const gammaFactors = [];
+  for (const i of erasurePowers) {
+    const X = field.exp[i % n]; // α^i
+    gamma = fieldPolyMul(field, gamma, [1, X]);
+    gammaFactors.push({
+      power: i, // x^i
+      locator: X,
+      locatorText: `α^${i % n}`,
+      rootText: `α^${(n - i) % n}`, // Γ/Λ 的根
+      stringIndex0: n - 1 - i,
+      stringIndex1: n - i,
+    });
+  }
+
+  // 6) Forney 擦除修正综合症：T_j = Σ_{r=0..e} γ_r S_{j−r}，j = e+1..2t。
+  //    对任一擦除定位元 X_k 有 Σ_r γ_r X_k^{j−r} = X_k^j·Γ(X_k^(−1)) = 0，
+  //    故 T 中擦除贡献被精确消去，只含未知错误位置的指数和；
+  //    可用的 T 共 2t−e 个，BM 求未知错误定位多项式 σ（与 Γ 互素）。
+  const modifiedSyndromes = [];
+  for (let j = eCount + 1; j <= twoT; j++) {
+    let tval = 0;
+    for (let r = 0; r <= eCount; r++) {
+      if (gamma[r] !== 0) {
+        tval ^= field.mul(gamma[r], syndromes[j - r - 1]); // S_{j−r}
+      }
+    }
+    modifiedSyndromes.push(tval);
+  }
+  const { lambda: sigma, L } = berlekampMassey(field, modifiedSyndromes);
+
+  // 联合能力界限：2ν + e ≤ 2t（ν 为未知错误数，e 为擦除数）。
+  // 擦除只把已知位置纳入定位，绝不放宽原有码字规则。
+  if (2 * L + eCount > twoT) {
     throw new Error(
-      `不可纠正：BM 定位多项式次数 L=${L} 超过纠错能力 t=${t}，损坏超出该码设计能力。`
+      hasErasures
+        ? `不可纠正：联合能力界限 2ν+e ≤ 2t 被破坏（未知错误 ν=${L}、擦除 e=${eCount}，2ν+e=${2 * L + eCount} > 2t=${twoT}），擦除标记不能放宽码字规则。`
+        : `不可纠正：BM 定位多项式次数 L=${L} 超过纠错能力 t=${t}，损坏超出该码设计能力。`
     );
   }
 
-  // 6) Chien 搜索。
-  const roots = chienSearch(field, lambda, L);
-  if (roots.length !== L) {
+  // 7) 联合定位多项式 Λ(x) = Γ(x)·σ(x)；σ 只含未知位置，与 Γ 互素，根互异。
+  const lambda = hasErasures ? fieldPolyMul(field, gamma, sigma) : sigma;
+  const locDeg = lambda.length - 1;
+  // 次数闭合校验：deg Λ 必须等于 e + L（理论上恒等，防御性核验因子首项不丢失）。
+  if (locDeg !== eCount + L) {
     throw new Error(
-      `定位证据无法闭合：定位多项式次数为 ${L}，但 Chien 搜索在 ${n} 个比特位置中只找到 ${roots.length} 个根，不可伪装为正常数据。`
+      `定位证据无法闭合：联合定位多项式次数 ${locDeg} 不等于擦除数 ${eCount} 与未知错误定位次数 ${L} 之和。`
     );
   }
 
-  // 7) 翻转命中位，重新计算全部综合症，必须全部归零。
+  // 8) Chien 搜索：Λ(α^(−i)) = 0，i = 0..n−1。
+  const roots = chienSearch(field, lambda, locDeg);
+  if (roots.length !== locDeg) {
+    throw new Error(
+      hasErasures
+        ? `定位证据无法闭合：联合定位多项式次数为 ${locDeg}（擦除 ${eCount} + 未知 ${L}），但 Chien 搜索在 ${n} 个比特位置中只找到 ${roots.length} 个根，擦除标记与综合症证据不一致。`
+        : `定位证据无法闭合：定位多项式次数为 ${L}，但 Chien 搜索在 ${n} 个比特位置中只找到 ${roots.length} 个根，不可伪装为正常数据。`
+    );
+  }
+
+  // 9) 根证据闭合：每个擦除定位元必须是联合多项式的根，且联合根恰由
+  //    “全部擦除位 + L 个未知错误位”组成，不多不少。
+  const erasurePowerSet = new Set(erasurePowers);
+  const jointPowerSet = new Set(roots);
+  const missingErasurePowers = erasurePowers.filter((i) => !jointPowerSet.has(i));
+  if (missingErasurePowers.length > 0) {
+    const first = missingErasurePowers[0];
+    throw new Error(
+      `根证据无法闭合：擦除位置 x^${first}（串内下标 ${n - 1 - first}，定位元 α^${first}）不是联合定位多项式的根，该擦除标记与接收码字综合症矛盾。`
+    );
+  }
+  const unknownPowers = roots
+    .filter((i) => !erasurePowerSet.has(i))
+    .sort((a, b) => a - b);
+  if (unknownPowers.length !== L) {
+    throw new Error(
+      `根证据无法闭合：联合定位的 ${roots.length} 个根中除 ${eCount} 个擦除位外有 ${unknownPowers.length} 个额外位置，与未知错误定位次数 ${L} 不符。`
+    );
+  }
+
+  // 10) 翻转全部联合命中位，重新计算全部综合症，必须全部归零。
   const corrected = rStr.split('');
   for (const i of roots) {
     const idx = n - 1 - i; // 串下标（最左为 0，对应 x^(n−1)）
@@ -325,9 +460,24 @@ export function analyzeBch({ m, polyStr, t, rStr }) {
       .filter(Boolean)
       .join(', ');
     throw new Error(
-      `定位证据无法闭合：按定位结果纠正后综合症仍非零（${nonzero}），拒绝给出可纠正结论。`
+      `定位证据无法闭合：按联合定位结果纠正后综合症仍非零（${nonzero}），拒绝给出可纠正结论。`
     );
   }
+
+  const erasureLocator = {
+    provided: hasErasures,
+    count: eCount,
+    degree: eCount,
+    text: hasErasures ? formatLocator(field, gamma) : '1',
+    factors: gammaFactors,
+    stringIndexes0: erasureStringIndexes.slice().sort((a, b) => a - b),
+    // Forney 修正综合症 T_j（j = e+1..2t）；无擦除时即原 S_1..S_2t。
+    modifiedSyndromes: modifiedSyndromes.map((v, idx) => ({
+      j: idx + eCount + 1,
+      value: v,
+      text: v === 0 ? '0' : `α^${field.log[v]}`,
+    })),
+  };
 
   return {
     params: { m, n, t, primitiveBits: polyStr, k: generator.k },
@@ -340,27 +490,47 @@ export function analyzeBch({ m, polyStr, t, rStr }) {
       cosets: generator.cosets,
     },
     syndromes: syndromeView,
+    // 未知错误定位多项式 σ（BM 输出；无擦除时即联合定位多项式）。
     locator: {
       degree: L,
-      text: formatLocator(field, lambda),
-      coefficients: lambda.map((v, i) => ({
+      text: formatLocator(field, sigma),
+      coefficients: sigma.map((v, i) => ({
         i,
         value: v,
         text: v === 0 ? '0' : v === 1 ? '1' : `α^${field.log[v]}`,
       })),
     },
-    roots: roots.map((i) => ({
-      power: i, // x^i
-      rootText: `α^${(n - i) % n}`, // Λ 的根 α^(−i)
-      stringIndex0: n - 1 - i, // 串内 0 基下标（自左向右）
-      stringIndex1: n - i, // 串内 1 基位置（自左向右）
-    })),
-    errorCount: L,
+    // 擦除定位多项式 Γ；联合定位多项式 Λ = Γ·σ。
+    erasureLocator,
+    jointLocator: {
+      degree: locDeg,
+      text: formatLocator(field, lambda),
+      capacityUsed: 2 * L + eCount,
+      capacityBound: twoT,
+      unknownCount: L,
+      erasureCount: eCount,
+      boundText: `2ν + e = 2·${L} + ${eCount} = ${2 * L + eCount} ≤ 2t = ${twoT}`,
+    },
+    roots: roots
+      .map((i) => ({
+        power: i, // x^i
+        rootText: `α^${(n - i) % n}`, // Λ 的根 α^(−i)
+        stringIndex0: n - 1 - i, // 串内 0 基下标（自左向右）
+        stringIndex1: n - i, // 串内 1 基位置（自左向右）
+        kind: erasurePowerSet.has(i) ? 'erasure' : 'unknown',
+      }))
+      .sort((a, b) => a.power - b.power),
+    erasureCount: eCount,
+    errorCount: locDeg,
+    unknownErrorCount: L,
     received: rStr,
     corrected: cStr,
-    changed: allZero && L === 0,
-    conclusion:
-      L === 0
+    changed: allZero && locDeg === 0,
+    conclusion: hasErasures
+      ? locDeg === 0
+        ? '综合症全部为零且未提供擦除：接收码字本身就是合法码字，无需纠正。'
+        : `可纠正：${eCount} 个标记擦除与 ${L} 个未知错误共同定位（联合 ${locDeg} 位），2ν+e=${2 * L + eCount} ≤ 2t=${twoT}，翻转后全部 ${twoT} 个综合症归零。`
+      : L === 0
         ? '综合症全部为零：接收码字本身就是合法码字，无需纠正。'
         : `可纠正：定位到 ${L} 个错误比特，纠正后全部 ${twoT} 个综合症归零。`,
   };
