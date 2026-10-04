@@ -10,6 +10,11 @@ self.onmessage = (e) => {
       polyStr: String(msg.polyStr ?? ''),
       t: Number(msg.t),
       rStr: String(msg.rStr ?? ''),
+      // 擦除位置保留为原始文本，由核心库按当前码长统一校验（空串等价于未填写）。
+      erasures:
+        msg.erasureStr === undefined || msg.erasureStr === null
+          ? undefined
+          : String(msg.erasureStr),
     });
     self.postMessage({ type: 'result', result });
   } catch (err) {

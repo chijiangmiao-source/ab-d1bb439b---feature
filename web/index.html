@@ -96,6 +96,12 @@
           value="000000000000010">
         <div class="hint">仅含 0/1，长度须恰为 2<sup>m</sup>−1；最左位对应 x<sup>n−1</sup>，综合症 / BM / Chien 共用同一位序</div>
       </div>
+
+      <label for="erasure">擦除位置（可选）</label>
+      <div>
+        <input id="erasure" type="text" spellcheck="false" autocomplete="off" placeholder="如 2, 9（留空则与原纯错误复核一致）">
+        <div class="hint">链路质量标记出的不可靠比特，<b>零基</b>串内位置（自左向右 0..n−1），逗号 / 空格分隔；仅用于定位，码字规则不放宽：联合能力界限 2ν+s ≤ 2t，且翻转后综合症必须全零</div>
+      </div>
     </div>
     <div class="buttons">
       <button id="btn-run">复核</button>
@@ -130,24 +136,47 @@
   </section>
 
   <section id="result3" class="panel result">
-    <h2>③ Berlekamp–Massey 错误定位多项式</h2>
+    <h2>③ Berlekamp–Massey 定位多项式</h2>
     <div class="mono" id="locator-text"></div>
     <div class="scroll-x" style="margin-top:8px"><table>
-      <thead><tr><th>i</th><th>Λ_i（GF(2^m) 元素）</th></tr></thead>
+      <thead><tr><th>i</th><th id="th-loc-coeff">Λ_i（GF(2^m) 元素）</th></tr></thead>
       <tbody id="t-loc"></tbody>
     </table></div>
   </section>
 
-  <section id="result4" class="panel result">
-    <h2>④ Chien 搜索：Λ(α<sup>−i</sup>) = 0 对应的比特位置</h2>
+  <section id="result-era" class="panel result">
+    <h2>④ 擦除定位多项式与联合定位证据</h2>
     <div class="scroll-x"><table>
-      <thead><tr><th>错误位 x^i（幂次）</th><th>定位根</th><th>串内位置（自左数，1 基）</th></tr></thead>
+      <tbody id="t-era-meta"></tbody>
+    </table></div>
+    <div class="mono" style="margin-top:8px" id="era-gamma"></div>
+    <div class="scroll-x" style="margin-top:6px"><table>
+      <thead><tr><th>i</th><th>Γ_i（GF(2^m) 元素）</th></tr></thead>
+      <tbody id="t-era-gamma"></tbody>
+    </table></div>
+    <div class="mono" style="margin-top:10px" id="era-modified"></div>
+    <div class="scroll-x" style="margin-top:6px"><table>
+      <thead><tr id="th-era-mod"></tr></thead>
+      <tbody><tr id="td-era-mod"></tr></tbody>
+    </table></div>
+    <div class="mono" style="margin-top:10px" id="era-psi"></div>
+    <div class="scroll-x" style="margin-top:6px"><table>
+      <thead><tr><th>i</th><th>Ψ_i（GF(2^m) 元素）</th></tr></thead>
+      <tbody id="t-era-psi"></tbody>
+    </table></div>
+    <p class="hint" id="era-capacity" style="margin-top:8px"></p>
+  </section>
+
+  <section id="result4" class="panel result">
+    <h2><span id="h-roots">④</span> Chien 搜索：定位多项式在 α<sup>−i</sup> 处取零对应的比特位置</h2>
+    <div class="scroll-x"><table>
+      <thead><tr><th>翻转位 x^i（幂次）</th><th>定位根</th><th>串内位置（自左数，1 基）</th><th>来源</th></tr></thead>
       <tbody id="t-roots"></tbody>
     </table></div>
   </section>
 
   <section id="result5" class="panel result">
-    <h2>⑤ 纠正结果 <span id="conclusion-badge" class="badge ok"></span></h2>
+    <h2><span id="h-res5">⑤</span> 纠正结果 <span id="conclusion-badge" class="badge ok"></span></h2>
     <table>
       <tbody>
         <tr><th>接收码字</th><td id="cw-in" class="mono codeword"></td></tr>
@@ -158,7 +187,7 @@
     <p class="hint" id="conclusion-text"></p>
   </section>
 </main>
-<footer>本地静态页面 · Worker 先验证本原性再构造生成多项式 · 仅当根数 = deg(Λ) 且纠正后综合症全零才给出可纠正结论</footer>
+<footer>本地静态页面 · Worker 先验证本原性再构造生成多项式 · 仅当根数与定位多项式次数相符、纠正后综合症全零、且（有擦除标记时）2ν+s ≤ 2t 才给出可纠正结论</footer>
 
 <script type="module" src="./app.js"></script>
 </body>
